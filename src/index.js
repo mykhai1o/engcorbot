@@ -44,7 +44,50 @@ const GROUP_TEST_ID = -1004467291256;
 const THREAD_TEST_ID = 121;
 const GROUP_ID_proj = -1003927786565;
 const THREAD_ID_proj = 2;
-// const ALLOWED_PROJECT_THREAD_ID = ;
+
+
+
+
+
+function getWordLanguage(word) {
+	const cleanWord = word
+		.toLowerCase()
+		.replace(/[.,!?;:()"']/g, "");
+
+	if (!cleanWord) {
+		return "unknown";
+	}
+
+	// Якщо є українські специфічні символи
+	if (/[іїєґ]/i.test(cleanWord)) {
+		return "uk";
+	}
+
+	// Якщо слово містить тільки латиницю
+	if (/^[a-z]+$/i.test(cleanWord)) {
+		return "en";
+	}
+
+	return "unknown";
+}
+
+function splitIntoWords(text) {
+	return text.split(/\s+/);
+}
+
+function analyzeWords(text) {
+	const words = splitIntoWords(text);
+
+	return words.map(word => ({
+		word,
+		language: getWordLanguage(word)
+	}));
+}
+
+console.log(
+	analyzeWords("Привіт, my name is Петро")
+);
+
 
 // 1. Функція для прямого виклику Gemini API без важких бібліотек
 async function askGemini(text, apiKey) {
