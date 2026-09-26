@@ -1,8 +1,12 @@
 function getWordScript(word) {
-    const cleanWord = word.trim().replace(/[.,!?;:()"']/g, "");
+    const cleanWord = word.trim().replace(/[\p{P}\p{S}\p{Extended_Pictographic}]/gu, "");
 
     if (!cleanWord) {
         return "punctuation";
+    }
+
+    if (/^\d+$/.test(cleanWord)) {
+        return "number";
     }
 
     // Перевірка на кирилицю (українська, тощо)
@@ -37,7 +41,11 @@ function segmentTextByScript(text) {
 
         if (!currentSegment) {
             currentSegment = { alphabet: alphabet, text: token };
-        } else if (currentSegment.alphabet === alphabet || alphabet === "punctuation") {
+        } else if (
+            currentSegment.alphabet === alphabet ||
+            alphabet === "punctuation" ||
+            alphabet === "number"
+        ) {
             // Пунктуацію приєднуємо до поточного активного сегменту
             currentSegment.text += token;
         } else {
@@ -70,18 +78,127 @@ const MAIN_PROMPT = `
             Return strictly a JSON object matching the provided schema.No markdown wrapping.
 `;
 
+// const PROMPT_SCHEMA = {
+//     type: "object",
+//     properties: {
+//         detected_language: { type: "string", description: "The ISO 2-letter language code of the detected segment (e.g. en, de, fr, es, uk)" },
+//         has_error: { type: "boolean" },
+//         specific_error: { type: "string", description: "A specific error that needs to be corrected in text segment in its original language, or empty if no error" },
+//         correction: { type: "string", description: "The corrected text segment in its original language, or empty if no error" },
+//         explanation: { type: "string", description: "A brief, clear explanation of the errors and recommendations written in its original language" }
+//     },
+//     required: ["detected_language", "has_error", "specific_error", "correction", "explanation"]
+// };
+
+// const PROMPT_SCHEMA = {
+//     type: "object",
+//     properties: {
+//         detected_language: {
+//             type: "string",
+//             description: "The ISO 2-letter language code of the detected segment (e.g. en, de, fr, es, uk)"
+//         },
+
+//         has_error: {
+//             type: "boolean"
+//         },
+
+//         errors: {
+//             type: "array",
+//             description: "A list of all real grammar, spelling, or vocabulary errors found in the text segment. Empty if there are no errors.",
+//             items: {
+//                 type: "object",
+//                 properties: {
+//                     specific_error: {
+//                         type: "string",
+//                         description: "The specific incorrect word or phrase in the original text"
+//                     },
+
+//                     correction: {
+//                         type: "string",
+//                         description: "The corrected word or phrase in the original language"
+//                     },
+
+//                     explanation: {
+//                         type: "string",
+//                         description: "A brief, clear explanation of this error and its correction, written in the original language"
+//                     }
+//                 },
+
+//                 required: [
+//                     "specific_error",
+//                     "correction",
+//                     "explanation"
+//                 ]
+//             }
+//         }
+//     },
+
+//     required: [
+//         "detected_language",
+//         "has_error",
+//         "errors"
+//     ]
+// };
+
 const PROMPT_SCHEMA = {
     type: "object",
     properties: {
-        detected_language: { type: "string", description: "The ISO 2-letter language code of the detected segment (e.g. en, de, fr, es, uk)" },
-        has_error: { type: "boolean" },
-        specific_error: { type: "string", description: "A specific error that needs to be corrected in text segment in its original language, or empty if no error" },
-        correction: { type: "string", description: "The corrected text segment in its original language, or empty if no error" },
-        explanation: { type: "string", description: "A brief, clear explanation of the errors and recommendations written in its original language" }
-    },
-    required: ["detected_language", "has_error", "specific_error", "correction", "explanation"]
-};
+        segments: {
+            type: "array",
+            items: {
+                type: "object",
+                properties: {
+                    segment_id: {
+                        type: "integer"
+                    },
 
+                    detected_language: {
+                        type: "string",
+                        description: "The ISO 2-letter language code of the segment"
+                    },
+
+                    has_error: {
+                        type: "boolean"
+                    },
+
+                    errors: {
+                        type: "array",
+                        items: {
+                            type: "object",
+                            properties: {
+                                specific_error: {
+                                    type: "string"
+                                },
+
+                                correction: {
+                                    type: "string"
+                                },
+
+                                explanation: {
+                                    type: "string"
+                                }
+                            },
+                            required: [
+                                "specific_error",
+                                "correction",
+                                "explanation"
+                            ]
+                        }
+                    }
+                },
+
+                required: [
+                    "segment_id",
+                    "detected_language",
+                    "has_error",
+                    "errors"
+                ]
+            }
+        }
+    },
+
+    required: ["segments"]
+};
 
 const GROUP_TEST_ID = -1004467291256;
 const THREAD_TEST_ID = 121;
@@ -91,7 +208,7 @@ const THREAD_ID_proj = 2;
 
 
 async function askGemini(text, apiKey) {
-    const model = "gemini-3.6-flash"; // Cloudflare Workers чудово працює з цією моделлю
+    const model = "gemini-3.1-flash-lite"; // Cloudflare Workers чудово працює з цією моделлю
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
     const response = await fetch(url, {
@@ -222,14 +339,19 @@ async function handleUpdate(update, env) {
 
 
 
-            if (answer.has_error && enabledLanguages.includes(answer.detected_language)) {
-                errors.push({
-                    language: answer.detected_language,
-                    segment: cleanSegmentText,
-                    specificError: answer.specific_error,
-                    correction: answer.correction,
-                    explanation: answer.explanation
-                });
+            if (
+                answer.has_error &&
+                enabledLanguages.includes(answer.detected_language)
+            ) {
+                for (const error of answer.errors) {
+                    errors.push({
+                        language: answer.detected_language,
+                        segment: cleanSegmentText,
+                        specificError: error.specific_error,
+                        correction: error.correction,
+                        explanation: error.explanation
+                    });
+                }
             }
 
 
@@ -248,7 +370,7 @@ async function handleUpdate(update, env) {
                 // `<b>[${error.language}]</b>\n` +
                 // `Сегмент: <i>"${error.segment}"</i>\n\n` +
                 // `Maybe you mean:\n` +
-                `<b><s>${error.specificError}</s></b> ➩ <b>${error.correction}</b>`
+                `<b><s>${error.specificError}</s></b> ➩ <b>${error.correction}</b>\n`
             // + `✅ <i>${error.explanation}</i>\n\n` +
             // `────────────\n\n`;
         }
