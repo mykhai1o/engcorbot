@@ -334,10 +334,17 @@ async function handleUpdate(update, env) {
     // Ігнорування повідомлень із певними хештегами
     const ignoredHashtags = ["#en"];
 
+    // const hasIgnoredHashtag = ignoredHashtags.some(hashtag =>
+    //     new RegExp(`(^|\\s)${hashtag}(?=\\s|$)`, "i").test(message.text)
+    // );
     const hasIgnoredHashtag = ignoredHashtags.some(hashtag =>
-        new RegExp(`(^|\\s)${hashtag}(?=\\s|$)`, "i").test(message.text)
+        new RegExp(`${hashtag}`, "i").test(message.text)
     );
 
+    if (hasIgnoredHashtag) {
+        console.log("Повідомлення пропущено через хештег");
+        return;
+    }
 
     try {
 
@@ -349,10 +356,7 @@ async function handleUpdate(update, env) {
         console.log(message.text);
         console.log("---");
 
-        if (hasIgnoredHashtag) {
-            console.log("Повідомлення пропущено через хештег");
-            return;
-        }
+
 
         const geminiKey = env.GEMINI_API_KEY;
         const botToken = env.TELEGRAM_BOT_TOKEN;
