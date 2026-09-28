@@ -61,22 +61,22 @@ function segmentTextByScript(text) {
     return segments;
 }
 
-const MAIN_PROMPT = `
-        You are an expert multilingual linguistic assistant.Your task is to analyze the provided text segment and perform grammar and vocabulary checks.
+// const MAIN_PROMPT = `
+//         You are an expert multilingual linguistic assistant.Your task is to analyze the provided text segment and perform grammar and vocabulary checks.
 
-        Supported languages for verification: English, German, French, Spanish.
+//         Supported languages for verification: English, German, French, Spanish.
 
-        Instructions:
-            1. Determine the language of the input text segment.
-            2. If the text is in English, German, French, or Spanish:
-                - Scan for any real grammar, spelling, or vocabulary errors.
-                - Ignore stylistic preferences, informal language, slang, contractions, capitalization (including proper nouns and abbreviations), or punctuation - only changes.
-                - Do not correct proper names, usernames, URLs, code, commands, or quoted text.
-            3. If there are errors, set "has_error" to true, and provide the "correction"(the fully corrected segment) and a short "explanation" in its original language.
-            4. If the text is in another language(e.g., Ukrainian) or contains no errors, set "has_error" to false, with empty string values for other fields.
+//         Instructions:
+//             1. Determine the language of the input text segment.
+//             2. If the text is in English, German, French, or Spanish:
+//                 - Scan for any real grammar, spelling, or vocabulary errors.
+//                 - Ignore stylistic preferences, informal language, slang, contractions, capitalization (including proper nouns and abbreviations), or punctuation - only changes.
+//                 - Do not correct proper names, usernames, URLs, code, commands, or quoted text.
+//             3. If there are errors, set "has_error" to true, and provide the "correction"(the fully corrected segment) and a short "explanation" in its original language.
+//             4. If the text is in another language(e.g., Ukrainian) or contains no errors, set "has_error" to false, with empty string values for other fields.
 
-            Return strictly a JSON object matching the provided schema.No markdown wrapping.
-`;
+//             Return strictly a JSON object matching the provided schema.No markdown wrapping.
+// `;
 
 // const PROMPT_SCHEMA = {
 //     type: "object",
@@ -140,6 +140,45 @@ const MAIN_PROMPT = `
 //     ]
 // };
 
+const MAIN_PROMPT = `
+You are an expert multilingual linguistic assistant. Your task is to analyze multiple text segments and perform grammar, spelling, and vocabulary checks.
+
+Supported languages for verification: English, German, French, Spanish.
+
+The input contains multiple segments marked as [SEGMENT N].
+
+Instructions:
+
+1. Analyze each segment independently.
+
+2. Determine the language of each segment.
+
+3. If the segment is in English, German, French, or Spanish:
+    - Scan the ENTIRE segment for ALL real grammar, spelling, and vocabulary errors.
+    - Do not stop after finding the first error.
+    - Return every detected error in the "errors" array.
+    - Ignore stylistic preferences, informal language, slang, contractions, capitalization, punctuation-only changes.
+    - Do not correct proper names, usernames, URLs, code, commands, or quoted text.
+    - Do not invent errors.
+
+4. If the segment is in another language:
+    - Set "has_error" to false.
+    - Return an empty "errors" array.
+
+5. If the segment contains no errors:
+    - Set "has_error" to false.
+    - Return an empty "errors" array.
+
+6. The "segment_id" must correspond exactly to the [SEGMENT N] number from the input.
+
+7. For every detected error provide:
+    - "specific_error": the incorrect word or phrase from the original text.
+    - "correction": the corrected word or phrase.
+    - "explanation": a short and clear explanation in the original language.
+
+Return strictly a JSON object matching the provided schema. No markdown wrapping.
+`;
+
 const PROMPT_SCHEMA = {
     type: "object",
     properties: {
@@ -154,7 +193,7 @@ const PROMPT_SCHEMA = {
 
                     detected_language: {
                         type: "string",
-                        description: "The ISO 2-letter language code of the segment"
+                        description: "The ISO 2-letter language code of the detected segment (e.g. en, de, fr, es, uk)"
                     },
 
                     has_error: {
@@ -167,15 +206,18 @@ const PROMPT_SCHEMA = {
                             type: "object",
                             properties: {
                                 specific_error: {
-                                    type: "string"
+                                    type: "string",
+                                    description: "A specific incorrect word or phrase from the original segment"
                                 },
 
                                 correction: {
-                                    type: "string"
+                                    type: "string",
+                                    description: "The corrected word or phrase in the original language"
                                 },
 
                                 explanation: {
-                                    type: "string"
+                                    type: "string",
+                                    description: "A brief, clear explanation of this error and its correction"
                                 }
                             },
                             required: [
@@ -289,6 +331,14 @@ async function handleUpdate(update, env) {
         return;
     }
 
+    // Ігнорування повідомлень із певними хештегами
+    const ignoredHashtags = ["#en"];
+
+    const hasIgnoredHashtag = ignoredHashtags.some(hashtag =>
+        new RegExp(`(^|\\s)${hashtag}(?=\\s|$)`, "i").test(message.text)
+    );
+
+
     try {
 
         console.log(message.chat.id);
@@ -298,6 +348,11 @@ async function handleUpdate(update, env) {
         console.log(message.from.first_name);
         console.log(message.text);
         console.log("---");
+
+        if (hasIgnoredHashtag) {
+            console.log("Повідомлення пропущено через хештег");
+            return;
+        }
 
         const geminiKey = env.GEMINI_API_KEY;
         const botToken = env.TELEGRAM_BOT_TOKEN;
@@ -323,39 +378,76 @@ async function handleUpdate(update, env) {
         // const enabledLanguages = ["en", "de", "fr", "es"];
         const enabledLanguages = ["en"];
 
-        // 3. Перевіряємо кожен іншомовний сегмент окремо
-        for (const segment of latinSegments) {
-            const cleanSegmentText = segment.text.trim();
+        // [trying] 
+        const combinedText = latinSegments
+            .map((segment, index) => {
+                return `[SEGMENT ${index + 1}]\n${segment.text.trim()}`;
+            })
+            .join("\n\n");
 
-            // Ігноруємо занадто короткі сегменти (наприклад, 1-2 літери), які часто є абревіатурами або помилками
-            if (cleanSegmentText.length < 3) {
+
+
+        // [trying]
+
+        const answer = await askGemini(combinedText, geminiKey);
+        console.log(`Аналіз сегментів: `, JSON.stringify(answer));
+
+
+        for (const segment of answer.segments) {
+
+            if (
+                !segment.has_error ||
+                !enabledLanguages.includes(segment.detected_language)
+            ) {
                 continue;
             }
 
-            const answer = await askGemini(cleanSegmentText, geminiKey);
-            console.log(`Аналіз сегменту "${cleanSegmentText}": `, JSON.stringify(answer));
-
-            // Якщо виявлено помилку і мова входить до переліку підтримуваних
-
-
-
-            if (
-                answer.has_error &&
-                enabledLanguages.includes(answer.detected_language)
-            ) {
-                for (const error of answer.errors) {
-                    errors.push({
-                        language: answer.detected_language,
-                        segment: cleanSegmentText,
-                        specificError: error.specific_error,
-                        correction: error.correction,
-                        explanation: error.explanation
-                    });
-                }
+            for (const error of segment.errors) {
+                errors.push({
+                    language: segment.detected_language,
+                    segment: segment.segment_id,
+                    specificError: error.specific_error,
+                    correction: error.correction,
+                    explanation: error.explanation
+                });
             }
-
-
         }
+
+        // 3. Перевіряємо кожен іншомовний сегмент окремо
+
+        // [test]
+        // for (const segment of latinSegments) {
+        //     const cleanSegmentText = segment.text.trim();
+
+        //     // Ігноруємо занадто короткі сегменти (наприклад, 1-2 літери), які часто є абревіатурами або помилками
+        //     if (cleanSegmentText.length < 3) {
+        //         continue;
+        //     }
+
+        //     const answer = await askGemini(cleanSegmentText, geminiKey);
+        //     console.log(`Аналіз сегменту "${cleanSegmentText}": `, JSON.stringify(answer));
+
+        //     // Якщо виявлено помилку і мова входить до переліку підтримуваних
+
+
+
+        //     if (
+        //         answer.has_error &&
+        //         enabledLanguages.includes(answer.detected_language)
+        //     ) {
+        //         for (const error of answer.errors) {
+        //             errors.push({
+        //                 language: answer.detected_language,
+        //                 segment: cleanSegmentText,
+        //                 specificError: error.specific_error,
+        //                 correction: error.correction,
+        //                 explanation: error.explanation
+        //             });
+        //         }
+        //     }
+
+
+        // }
 
         // 5. Якщо помилок немає — нічого не відправляємо 
         if (errors.length === 0) {
@@ -420,5 +512,3 @@ export default {
 
 
 };
-
-
