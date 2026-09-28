@@ -1,3 +1,4 @@
+// Defining numbers, punctuation and the alfabet of words (cyrillic or latin)
 function getWordScript(word) {
     const cleanWord = word.trim().replace(/[\p{P}\p{S}\p{Extended_Pictographic}]/gu, "");
 
@@ -9,28 +10,26 @@ function getWordScript(word) {
         return "number";
     }
 
-    // Перевірка на кирилицю (українська, тощо)
     if (/[\u0400-\u04FF]/i.test(cleanWord)) {
-        return "cyrillic"; // Українська, тощо
+        return "cyrillic";
     }
 
-    // Перевірка на латиницю (англійська, німецька, французька, іспанська з діакритикою)
     if (/^[a-zà-öø-ÿā-žßäöüñéèàçíó]+$/i.test(cleanWord)) {
-        return "latin"; // Англійська, Німецька, Французька, Іспанська
+        return "latin";
     }
 
     return "unknown";
 }
 
-
+// Make a segmentation of the message on latin and cyrillic parts 
 function segmentTextByScript(text) {
-    const words = text.split(/(\s+)/); // зберігаємо пробіли для точного відновлення фраз
+    const words = text.split(/(\s+)/);
     const segments = [];
     let currentSegment = null;
 
     for (const token of words) {
         if (!token.trim()) {
-            // Якщо це просто пробіли, додаємо їх до поточного сегменту
+            // Adding the gaps to previous segment
             if (currentSegment) {
                 currentSegment.text += token;
             }
@@ -46,7 +45,7 @@ function segmentTextByScript(text) {
             alphabet === "punctuation" ||
             alphabet === "number"
         ) {
-            // Пунктуацію приєднуємо до поточного активного сегменту
+            // Adding the punctuation and number to previous segment
             currentSegment.text += token;
         } else {
             segments.push(currentSegment);
@@ -250,7 +249,7 @@ const THREAD_ID_proj = 2;
 
 
 async function askGemini(text, apiKey) {
-    const model = "gemini-3.1-flash-lite"; // Cloudflare Workers чудово працює з цією моделлю
+    const model = "gemini-3.1-flash-lite";
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
     const response = await fetch(url, {
@@ -281,7 +280,7 @@ async function askGemini(text, apiKey) {
         const rawText = data.candidates[0].content.parts[0].text;
         return JSON.parse(rawText);
     } catch (e) {
-        throw new Error("Не вдалося розпарсити відповідь від Gemini: " + e.message);
+        throw new Error("Can`t parse response from Gemini: " + e.message);
     }
 }
 
@@ -306,7 +305,7 @@ async function sendMessage(chatId, text, replyToMessageId, botToken) {
 
     const data = await response.json();
     if (!data.ok) {
-        console.error("Помилка відправки в Telegram:", data.description);
+        console.error("Message sending error to Telegram:", data.description);
     }
 }
 
@@ -319,7 +318,7 @@ async function handleUpdate(update, env) {
         return;
     }
 
-    // Перевірка тредів (залишається без змін)
+    // Checking threds in groups
     if (message.chat.id === GROUP_TEST_ID && message.message_thread_id !== THREAD_TEST_ID) {
         return;
     }
@@ -331,7 +330,7 @@ async function handleUpdate(update, env) {
         return;
     }
 
-    // Ігнорування повідомлень із певними хештегами
+    // Checking heshtegs to avoid requests
     const ignoredHashtags = ["#en"];
 
     // const hasIgnoredHashtag = ignoredHashtags.some(hashtag =>
@@ -342,7 +341,7 @@ async function handleUpdate(update, env) {
     );
 
     if (hasIgnoredHashtag) {
-        console.log("Повідомлення пропущено через хештег");
+        console.log("Message was skipped because of hashtag");
         return;
     }
 
@@ -362,27 +361,27 @@ async function handleUpdate(update, env) {
         const botToken = env.TELEGRAM_BOT_TOKEN;
 
         if (!geminiKey || !botToken) {
-            console.error("Відсутні змінні оточення GEMINI_API_KEY або TELEGRAM_BOT_TOKEN");
+            console.error("ERROR: needed to check GEMINI_API_KEY or TELEGRAM_BOT_TOKEN");
             return;
         }
 
-        // 1. Розбиваємо повідомлення на сегменти
+        // Spliting message on segments
         const segments = segmentTextByScript(message.text);
 
-        // 2. Фільтруємо лише сегменти з латинським скриптом (англійська, німецька, французька, іспанська)
+        // Saving only latin segments
         const latinSegments = segments.filter(seg => seg.alphabet === "latin");
 
-        // Якщо немає іншомовних сегментів, ігноруємо повідомлення
         if (latinSegments.length === 0) {
             return;
         }
 
-        //Накопичення помилок
+        // Gathering all errors from text 
         const errors = [];
+        // Choose a working language
         // const enabledLanguages = ["en", "de", "fr", "es"];
         const enabledLanguages = ["en"];
 
-        // [trying] 
+        // Gathering all latin segments 
         const combinedText = latinSegments
             .map((segment, index) => {
                 return `[SEGMENT ${index + 1}]\n${segment.text.trim()}`;
@@ -391,12 +390,12 @@ async function handleUpdate(update, env) {
 
 
 
-        // [trying]
+        // Sending group of segments to llm
 
         const answer = await askGemini(combinedText, geminiKey);
-        console.log(`Аналіз сегментів: `, JSON.stringify(answer));
+        console.log(`Analyzing segments: `, JSON.stringify(answer));
 
-
+        //Geting errors from anwer
         for (const segment of answer.segments) {
 
             if (
@@ -417,13 +416,13 @@ async function handleUpdate(update, env) {
             }
         }
 
-        // 3. Перевіряємо кожен іншомовний сегмент окремо
+        // Cheking separate segments
 
         // [test]
         // for (const segment of latinSegments) {
         //     const cleanSegmentText = segment.text.trim();
 
-        //     // Ігноруємо занадто короткі сегменти (наприклад, 1-2 літери), які часто є абревіатурами або помилками
+        //     // Ignore small segments
         //     if (cleanSegmentText.length < 3) {
         //         continue;
         //     }
@@ -431,7 +430,7 @@ async function handleUpdate(update, env) {
         //     const answer = await askGemini(cleanSegmentText, geminiKey);
         //     console.log(`Аналіз сегменту "${cleanSegmentText}": `, JSON.stringify(answer));
 
-        //     // Якщо виявлено помилку і мова входить до переліку підтримуваних
+
 
 
 
@@ -453,25 +452,23 @@ async function handleUpdate(update, env) {
 
         // }
 
-        // 5. Якщо помилок немає — нічого не відправляємо 
         if (errors.length === 0) {
             return;
         }
 
-        // 6. Формуємо одне повідомлення з усіма помилками 
+        // Creating response message
         let responseText = "";
 
         for (const error of errors) {
             responseText +=
                 // `<b>[${error.language}]</b>\n` +
-                // `Сегмент: <i>"${error.segment}"</i>\n\n` +
                 // `Maybe you mean:\n` +
                 `<b><s>${error.specificError}</s></b> ➩ <b>${error.correction}</b>\n`
             // + `✅ <i>${error.explanation}</i>\n\n` +
             // `────────────\n\n`;
         }
 
-        // 7. Відправляємо ОДНУ відповідь 
+        // Sending one  answer with corrections 
         await sendMessage(
             message.chat.id,
             responseText,
@@ -479,34 +476,33 @@ async function handleUpdate(update, env) {
             botToken
         );
     } catch (e) {
-        console.error("Помилка під час обробки повідомлення:", e.message);
+        console.error("Message processing error:", e.message);
     }
 }
 
 
 
 
-// 4. Експорт обробника запитів Cloudflare Worker
+// Export Cloudflare Worker queries
 export default {
     async fetch(request, env, ctx) {
-        // Приймаємо лише POST запити (Telegram надсилає оновлення через POST)
+        // Resiving only POST queries
         if (request.method !== "POST") {
-            return new Response("Бот працює! Webhook активний.", {
+            return new Response("Bot is worcking! Webhook is active.", {
                 status: 200,
                 headers: { "Content-Type": "text/plain; charset=utf-8" }
             });
         }
 
         try {
-            // Парсимо JSON, який надіслав Telegram
+            // Parsing the JSON, which was getting from Telegram
             const update = await request.json();
 
-            // Запускаємо асинхронну обробку повідомлення. 
-            // Використовуємо ctx.waitUntil, щоб Worker не завершував роботу завчасно, 
-            // поки відправляється запит до Gemini та Telegram.
+            // Launching asynchronized message processing
+            // Using ctx.waitUntil, to make Worker keep going processe while query is sending to Gemini and Telegram.
             ctx.waitUntil(handleUpdate(update, env));
 
-            // Миттєво повертаємо Telegram статус 200 OK, щоб уникнути повторного надсилання того ж повідомлення
+            // Immediately getting back Telegram status 200 OK, to avoid sending the same message 
             return new Response("OK", { status: 200 });
         } catch (err) {
             console.error("Помилка обробника вебхука:", err.message);
