@@ -359,6 +359,12 @@ async function handleUpdate(update, env) {
 
         const geminiKey = env.GEMINI_API_KEY;
         const botToken = env.TELEGRAM_BOT_TOKEN;
+        const MAX_TEXT_LENGTH = 1500;
+
+        if (message.text.length > MAX_TEXT_LENGTH) {
+            console.log(`Message was skipped because of too large size of the message - ${message.text.length}`);
+            return;
+        }
 
         if (!geminiKey || !botToken) {
             console.error("ERROR: needed to check GEMINI_API_KEY or TELEGRAM_BOT_TOKEN");
