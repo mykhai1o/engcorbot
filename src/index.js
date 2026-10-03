@@ -243,8 +243,13 @@ const PROMPT_SCHEMA = {
 
 const GROUP_TEST_ID = -1004467291256;
 const THREAD_TEST_ID = 121;
+const THREAD_TEST_LOG = 249;
+const THREAD_TEST_ERROR = 251;
+
 const GROUP_ID_proj = -1003927786565;
 const THREAD_ID_proj = 2;
+
+// let CATCHED_ERRORS = [];
 
 
 
@@ -280,27 +285,37 @@ async function askGemini(text, apiKey) {
         const rawText = data.candidates[0].content.parts[0].text;
         return JSON.parse(rawText);
     } catch (e) {
+        // CATCHED_ERRORS.push("Can`t parse response from Gemini: " + e.message)
         throw new Error("Can`t parse response from Gemini: " + e.message);
     }
 }
 
 
-async function sendMessage(chatId, text, replyToMessageId, botToken) {
+async function sendMessage(chatId, text, replyToMessageId, botToken, messageThreadId = null) {
     const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
+
+    const body = {
+        chat_id: chatId,
+        text: text,
+        parse_mode: "HTML"
+    };
+
+    if (replyToMessageId) {
+        body.reply_parameters = {
+            message_id: replyToMessageId
+        };
+    }
+
+    if (messageThreadId) {
+        body.message_thread_id = messageThreadId;
+    }
 
     const response = await fetch(url, {
         method: "POST",
         headers: {
             "Content-Type": "application/json"
         },
-        body: JSON.stringify({
-            chat_id: chatId,
-            text: text,
-            parse_mode: "HTML",
-            reply_parameters: {
-                message_id: replyToMessageId
-            }
-        })
+        body: JSON.stringify(body)
     });
 
     const data = await response.json();
@@ -313,17 +328,20 @@ async function sendMessage(chatId, text, replyToMessageId, botToken) {
 
 async function handleUpdate(update, env) {
     const message = update.message;
+    let LOG = '';
 
     if (!message || typeof message.text !== "string") {
         return;
     }
 
-    // Checking threds in groups
+    // Checking threads in groups
     if (message.chat.id === GROUP_TEST_ID && message.message_thread_id !== THREAD_TEST_ID) {
+        console.log("Wrong thread!")
         return;
     }
-    if (message.chat.id === GROUP_ID_proj) {
-        // if (message.chat.id === GROUP_ID_proj && message.message_thread_id !== THREAD_ID_proj) {
+    // if (message.chat.id === GROUP_ID_proj) {
+    if (message.chat.id === GROUP_ID_proj && message.message_thread_id !== THREAD_ID_proj) {
+        console.log("Wrong thread!")
         return;
     }
     if (message.forward_origin) {
@@ -341,33 +359,45 @@ async function handleUpdate(update, env) {
     );
 
     if (hasIgnoredHashtag) {
-        console.log("Message was skipped because of hashtag");
+        LOG = "Message was skipped because of hashtag";
+        console.log(LOG);
         return;
     }
 
     try {
 
         console.log(message.chat.id);
-        console.log(message.message_id);
         console.log(message.message_thread_id);
+        console.log(message.message_id);
 
         console.log(message.from.first_name);
         console.log(message.text);
         console.log("---");
 
-
-
         const geminiKey = env.GEMINI_API_KEY;
         const botToken = env.TELEGRAM_BOT_TOKEN;
-        const MAX_TEXT_LENGTH = 1500;
+        const MAX_TEXT_LENGTH = 800;
 
         if (message.text.length > MAX_TEXT_LENGTH) {
-            console.log(`Message was skipped because of too large size of the message - ${message.text.length}`);
+            LOG = `Message was skipped because of too large size of the message - ${message.text.length}`;
+            console.log(LOG);
+
+            await sendMessage(
+                GROUP_TEST_ID,
+                `<b>— ${message.chat.title ?? "Без назви"} —</b>\n\n` +
+                `${message.from.first_name}\n` +
+                `---\n` +
+                `${LOG}`,
+                null,
+                botToken,
+                THREAD_TEST_LOG
+            );
             return;
         }
 
         if (!geminiKey || !botToken) {
             console.error("ERROR: needed to check GEMINI_API_KEY or TELEGRAM_BOT_TOKEN");
+            throw new Error("GEMINI_API_KEY or TELEGRAM_BOT_TOKEN is missing");
             return;
         }
 
@@ -399,7 +429,8 @@ async function handleUpdate(update, env) {
         // Sending group of segments to llm
 
         const answer = await askGemini(combinedText, geminiKey);
-        console.log(`Analyzing segments: `, JSON.stringify(answer));
+        LOG = `Analyzing segments: ${JSON.stringify(answer)}`;
+        console.log(LOG);
 
         //Geting errors from anwer
         for (const segment of answer.segments) {
@@ -422,41 +453,7 @@ async function handleUpdate(update, env) {
             }
         }
 
-        // Cheking separate segments
 
-        // [test]
-        // for (const segment of latinSegments) {
-        //     const cleanSegmentText = segment.text.trim();
-
-        //     // Ignore small segments
-        //     if (cleanSegmentText.length < 3) {
-        //         continue;
-        //     }
-
-        //     const answer = await askGemini(cleanSegmentText, geminiKey);
-        //     console.log(`Аналіз сегменту "${cleanSegmentText}": `, JSON.stringify(answer));
-
-
-
-
-
-        //     if (
-        //         answer.has_error &&
-        //         enabledLanguages.includes(answer.detected_language)
-        //     ) {
-        //         for (const error of answer.errors) {
-        //             errors.push({
-        //                 language: answer.detected_language,
-        //                 segment: cleanSegmentText,
-        //                 specificError: error.specific_error,
-        //                 correction: error.correction,
-        //                 explanation: error.explanation
-        //             });
-        //         }
-        //     }
-
-
-        // }
 
         if (errors.length === 0) {
             return;
@@ -481,12 +478,34 @@ async function handleUpdate(update, env) {
             message.message_id,
             botToken
         );
+        // Sending answer logs 
+        await sendMessage(
+            GROUP_TEST_ID,
+            `<b>— ${message.chat.title ?? "Без назви"} —</b>\n\n` +
+            `${message.text}\n` +
+            `---\n` +
+            `${LOG}`,
+            null,
+            botToken,
+            THREAD_TEST_LOG
+        );
     } catch (e) {
-        console.error("Message processing error:", e.message);
+        const errorText = "Message handling error: " + e.message;
+        if (env.TELEGRAM_BOT_TOKEN) {
+            await sendMessage(
+                GROUP_TEST_ID,
+                `<b>🔴 Message handler error</b>\n\n` +
+                `---\n` +
+                `${errorText}`,
+                null,
+                env.TELEGRAM_BOT_TOKEN,
+                THREAD_TEST_ERROR
+            );
+        }
+        // CATCHED_ERRORS.push(`Message handling error: ${e.message}`);
+        console.error("Message handling error:", e.message);
     }
 }
-
-
 
 
 // Export Cloudflare Worker queries
@@ -511,10 +530,63 @@ export default {
             // Immediately getting back Telegram status 200 OK, to avoid sending the same message 
             return new Response("OK", { status: 200 });
         } catch (err) {
-            console.error("Помилка обробника вебхука:", err.message);
+            const errorText = "Webhook handler error:" + err.message;
+            if (env.TELEGRAM_BOT_TOKEN) {
+                await sendMessage(
+                    GROUP_TEST_ID,
+                    `<b>🔴 Webhook handler error</b>\n\n` +
+                    `---\n` +
+                    `${errorText}`,
+                    null,
+                    env.TELEGRAM_BOT_TOKEN,
+                    THREAD_TEST_ERROR
+                );
+            }
+            // CATCHED_ERRORS.push(`"Webhook handler error: ${err.message}`)
+            console.error("Webhook handler error:", err.message);
             return new Response("Internal Server Error", { status: 500 });
         }
     }
 
 
 };
+
+
+
+
+/*
+        Cheking separate segments
+
+        [test]
+        for (const segment of latinSegments) {
+            const cleanSegmentText = segment.text.trim();
+
+            // Ignore small segments
+            if (cleanSegmentText.length < 3) {
+                continue;
+            }
+
+            const answer = await askGemini(cleanSegmentText, geminiKey);
+            console.log(`Аналіз сегменту "${cleanSegmentText}": `, JSON.stringify(answer));
+
+
+
+
+
+            if (
+                answer.has_error &&
+                enabledLanguages.includes(answer.detected_language)
+            ) {
+                for (const error of answer.errors) {
+                    errors.push({
+                        language: answer.detected_language,
+                        segment: cleanSegmentText,
+                        specificError: error.specific_error,
+                        correction: error.correction,
+                        explanation: error.explanation
+                    });
+                }
+            }
+
+
+        }*/
