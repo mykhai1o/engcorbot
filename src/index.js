@@ -249,9 +249,6 @@ const THREAD_TEST_ERROR = 251;
 const GROUP_ID_proj = -1003927786565;
 const THREAD_ID_proj = 2;
 
-// let CATCHED_ERRORS = [];
-
-
 
 async function askGemini(text, apiKey) {
     const model = "gemini-3.1-flash-lite";
@@ -285,7 +282,6 @@ async function askGemini(text, apiKey) {
         const rawText = data.candidates[0].content.parts[0].text;
         return JSON.parse(rawText);
     } catch (e) {
-        // CATCHED_ERRORS.push("Can`t parse response from Gemini: " + e.message)
         throw new Error("Can`t parse response from Gemini: " + e.message);
     }
 }
@@ -502,7 +498,6 @@ async function handleUpdate(update, env) {
                 THREAD_TEST_ERROR
             );
         }
-        // CATCHED_ERRORS.push(`Message handling error: ${e.message}`);
         console.error("Message handling error:", e.message);
     }
 }
@@ -542,7 +537,6 @@ export default {
                     THREAD_TEST_ERROR
                 );
             }
-            // CATCHED_ERRORS.push(`"Webhook handler error: ${err.message}`)
             console.error("Webhook handler error:", err.message);
             return new Response("Internal Server Error", { status: 500 });
         }
