@@ -1,3 +1,29 @@
+async function fetchWithRetry(url, options, maxRetries = 2) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        const response = await fetch(url, options);
+
+        if (response.ok) {
+            return response;
+        }
+
+        const shouldRetry = [408, 429, 500, 502, 503, 504]
+            .includes(response.status);
+
+        if (!shouldRetry || attempt === maxRetries) {
+            return response;
+        }
+
+        const delay = 1000 * (2 ** attempt);
+
+        console.log(
+            `Gemini error ${response.status}. ` +
+            `Retry ${attempt + 1}/${maxRetries} in ${delay}ms`
+        );
+
+        await new Promise(resolve => setTimeout(resolve, delay));
+    }
+}
+
 // Defining numbers, punctuation and the alfabet of words (cyrillic or latin)
 function getWordScript(word) {
     const cleanWord = word.trim().replace(/[\p{P}\p{S}\p{Extended_Pictographic}]/gu, "");
@@ -156,7 +182,7 @@ Instructions:
     - Scan the ENTIRE segment for ALL real grammar, spelling, and vocabulary errors.
     - Do not stop after finding the first error.
     - Return every detected error in the "errors" array.
-    - Ignore stylistic preferences, informal language, slang, contractions, capitalization, punctuation-only changes.
+    - Ignore any stylistic preferences, informal language, slang, contractions, capitalization, punctuation-only changes.
     - Do not correct proper names, usernames, URLs, code, commands, or quoted text.
     - Do not invent errors.
 
@@ -254,7 +280,7 @@ async function askGemini(text, apiKey) {
     const model = "gemini-3.1-flash-lite";
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
         method: "POST",
         headers: {
             "Content-Type": "application/json"
