@@ -276,39 +276,100 @@ const GROUP_ID_proj = -1003927786565;
 const THREAD_ID_proj = 2;
 
 
+// async function askGemini(text, apiKey) {
+//     const model = "gemini-3.1-flash-lite";
+//     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+//     const response = await fetchWithRetry(url, {
+//         method: "POST",
+//         headers: {
+//             "Content-Type": "application/json"
+//         },
+//         body: JSON.stringify({
+//             contents: [{ parts: [{ text: text }] }],
+//             systemInstruction: {
+//                 parts: [{ text: MAIN_PROMPT }]
+//             },
+//             generationConfig: {
+//                 responseMimeType: "application/json",
+//                 responseSchema: PROMPT_SCHEMA
+//             }
+//         })
+//     });
+
+//     if (!response.ok) {
+//         const errText = await response.text();
+//         throw new Error(`Gemini API Error: ${response.status} - ${errText}`);
+//     }
+
+//     const data = await response.json();
+
+//     try {
+//         const rawText = data.candidates[0].content.parts[0].text;
+//         return JSON.parse(rawText);
+//     } catch (e) {
+//         throw new Error("Can`t parse response from Gemini: " + e.message);
+//     }
+// }
+
 async function askGemini(text, apiKey) {
-    const model = "gemini-3.1-flash-lite";
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const primaryModel = "gemini-3.1-flash-lite";
+    const fallbackModel = "gemini-3.5-flash-lite";
 
-    const response = await fetchWithRetry(url, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-            contents: [{ parts: [{ text: text }] }],
-            systemInstruction: {
-                parts: [{ text: MAIN_PROMPT }]
+    async function requestModel(model) {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+        const response = await fetchWithRetry(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
             },
-            generationConfig: {
-                responseMimeType: "application/json",
-                responseSchema: PROMPT_SCHEMA
-            }
-        })
-    });
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: text }] }],
+                systemInstruction: {
+                    parts: [{ text: MAIN_PROMPT }]
+                },
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: PROMPT_SCHEMA
+                }
+            })
+        });
 
-    if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Gemini API Error: ${response.status} - ${errText}`);
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(
+                `Gemini API Error (${model}): ${response.status} - ${errText}`
+            );
+        }
+
+        const data = await response.json();
+
+        try {
+            const rawText = data.candidates[0].content.parts[0].text;
+            return JSON.parse(rawText);
+        } catch (e) {
+            throw new Error(
+                `Can't parse response from Gemini (${model}): ${e.message}`
+            );
+        }
     }
 
-    const data = await response.json();
-
     try {
-        const rawText = data.candidates[0].content.parts[0].text;
-        return JSON.parse(rawText);
-    } catch (e) {
-        throw new Error("Can`t parse response from Gemini: " + e.message);
+        // First try: primary model
+        return await requestModel(primaryModel);
+
+    } catch (primaryError) {
+        console.error(
+            `Primary model failed: ${primaryError.message}`
+        );
+
+        console.log(
+            `Switching to fallback model: ${fallbackModel}`
+        );
+
+        // Second try: fallback model
+        return await requestModel(fallbackModel);
     }
 }
 
